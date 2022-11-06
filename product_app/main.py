@@ -1,36 +1,27 @@
 # Importando bibliotecas necessárias
-
 from matplotlib.pyplot import title
 from sqlalchemy import desc
-from fastapi import FastAPI
-from fastapi import HTTPException
-from fastapi import Path
-from fastapi import Body
-from fastapi import Query
-from fastapi import status
+from fastapi import Depends, FastAPI, HTTPException, Path, Body, Query, status
 from fastapi.responses import HTMLResponse
-
-from typing import Union
-from typing import Optional
-
+from sqlalchemy.orm import Session
+from typing import Union, Optional, List
 from pydantic import BaseModel
 
-# Criando classe Produto 
+# Importando arquivos do projeto
+from . import models, schemas, crud
+from .database import SessionLocal, engine
 
-class Produto(BaseModel):
-    id: int
-    name: str
-
-# Criando produtos
-
-shampoo = Produto(id = 0, name = "Shampoo")
-sorvete = Produto(id = 1, name = "Sorvete")
-
-produtos = [shampoo, sorvete]
-
-# Criando CRUD
-
+# Criando as tabelas da base de dados:
+models.Base.metadata.create_all(bind=engine)
 app = FastAPI()
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # --------------------------- GET ---------------------------
 
@@ -44,7 +35,7 @@ async def root():
 <body>
     <li> <a href="http://127.0.0.1:8000/itens">Para acessar a lista de produtos</a> </li>
 
-    <li> <a href="http://127.0.0.1:8000/itens/0">Para acessar um produto com id específico</a> </li>
+    <li> <a href="http://127.0.0.1:8000/itens/1">Para acessar um produto com id específico</a> </li>
 
     <li> <a href="http://127.0.0.1:8000/docs">Para ver utilizar o CRUD</a> </li>
 
@@ -54,56 +45,51 @@ async def root():
 
 # get all
 @app.get("/itens")
-async def get_produtos():
-    return produtos
+def get_produtos(db: Session = Depends(get_db)):
+    products = crud.get_all_products(db)
+    return products
 
 # get by id
 @app.get("/itens/{id}")
-async def get_produto(id: int):
-    for produto in produtos:
-        if produto.id == id:
-            return produto
-    raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = "Produto não encontrado")
+def get_produto(id: int, db: Session = Depends(get_db)):
+    db_product = crud.get_product_by_id(db, product_id=id)
+    if db_product is None:
+        raise HTTPException(status_code = status.HTTP_404_NOT_FOUND, detail = "Produto não encontrado")
+    return db_product
 
 # --------------------------- POST ---------------------------
 
 @app.post("/itens/", status_code = status.HTTP_201_CREATED)
-async def post_produto(produto: Produto = Body(
-        title="Add produto",
-        description="Produto a ser adicionado via Body",
-        example={
-            "id": 3,
-            "name": "banana"
-        })):
-    produtos.append(produto)
-    return produto
+def post_produto(product: schemas.ProductCreate, db: Session = Depends(get_db)):
+    db_product = crud.get_product_by_name(db, product_name=product.name)
+    if db_product:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto já existente no inventário")
+    return crud.create_product(db=db, product=product)
+
+@app.post("/itens/{quantity}", status_code = status.HTTP_201_CREATED)
+def post_transacao(quantity: int, transaction: schemas.TransactionCreate, db: Session = Depends(get_db)):
+    try:
+        crud.create_transaction(db=db, transaction=transaction, quantity=quantity)
+        return "Produto adicionado ao inventário com sucesso"
+    except:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não existente no inventário")
 
 # --------------------------- PUT ---------------------------
 
-@app.put("/itens/{id}", status_code = status.HTTP_202_ACCEPTED)
-async def put_produto(produto: Produto = Body(
-        title="Update Produto",
-        description="Atualizar produto via Body",
-        example={
-            "id": 3,
-            "name": "banana"
-        })):
-    for prod in produtos:
-        if prod.id == produto.id: 
-            prod.name = produto.name 
-            return prod
-    
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado")
+@app.put("/itens/{id}", status_code = status.HTTP_201_CREATED)
+def put_produto(id: int, product: schemas.ProductCreate, db: Session = Depends(get_db)):
+    try:
+        crud.update_product(db=db, product_id=id, product=product)
+        return "Produto atualizado com sucesso"
+    except:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não existente no inventário")
 
-# --------------------------- DELETE ---------------------------
+# -------------------------- DELETE ---------------------------
 
 @app.delete("/itens/{id}", status_code = status.HTTP_204_NO_CONTENT)
-async def delete_produto(id: int = Path(
-    title="Delete produto",
-    description="Deletar produto pelo id",
-    )):
-    for produto in produtos:
-        if produto.id == id:
-            produtos.remove(produto)
-            return "Produto removido com sucesso"
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado")
+async def delete_produto(id: int, db: Session = Depends(get_db)):
+    try:
+        crud.delete_product(db, product_id=id)
+        return "Produto removido com sucesso"
+    except:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Produto não encontrado")
