@@ -6,7 +6,7 @@
 
 ### Uso:
 ##### Rodar:
-```uvicorn product:app --reload```
+```uvicorn product_app.main:app --reload```
 
 ##### Acessar
 
